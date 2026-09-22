@@ -1,0 +1,73 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "CAN TCP Gateway (SocketCAN)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/can_tcp_gateway.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--interface", "socketcan",
+                "--can", "can0",
+                "--bitrate", "250000",
+                "--port", "29500"
+            ]
+        },
+        {
+            "name": "CAN TCP Gateway (PCAN Windows)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/can_tcp_gateway.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--interface", "pcan",
+                "--can", "PCAN_USBBUS1",
+                "--bitrate", "250000",
+                "--port", "29500"
+            ]
+        },
+        {
+            "name": "CAN TCP Gateway (SLCAN Windows)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/can_tcp_gateway.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--interface", "slcan",
+                "--can", "COM3",
+                "--bitrate", "250000",
+                "--port", "29500"
+            ]
+        },
+        {
+            "name": "CAN TCP Client (vcan0)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/can_tcp_client.py",
+            "console": "integratedTerminal",
+            "args": [
+                "127.0.0.1",
+                "--port", "29500",
+                "--interface", "socketcan",
+                "--can", "vcan0",
+                "--dump"
+            ]
+        },
+        {
+            "name": "CAN TCP Client (PCAN Windows)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/can_tcp_client.py",
+            "console": "integratedTerminal",
+            "args": [
+                "192.168.1.50",
+                "--port", "29500",
+                "--interface", "pcan",
+                "--can", "PCAN_USBBUS1",
+                "--bitrate", "250000",
+                "--dump"
+            ]
+        }
+    ]
+}

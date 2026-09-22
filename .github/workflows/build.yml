@@ -1,0 +1,126 @@
+name: Build CanTcpGateway
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            backend: socketcan
+            label: ubuntu-22.04
+          - os: ubuntu-24.04
+            backend: socketcan
+            label: ubuntu-24.04
+          - os: windows-latest
+            backend: pcan
+            label: windows-pcan
+          - os: windows-latest
+            backend: slcan
+            label: windows-slcan
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip python-can pyinstaller
+
+      - name: Install UPX on Ubuntu
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y upx-ucl || true
+
+      - name: Install UPX on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        continue-on-error: true
+        run: choco install upx -y --no-progress
+
+      - name: Check Python syntax
+        run: python -c "from pathlib import Path; [compile(Path(p).read_text(), p, 'exec') for p in ('can_tcp_gateway.py', 'can_tcp_client.py')]"
+
+      - name: Run protocol tests
+        run: |
+          python -m pip install pytest
+          python -m pytest -q
+
+      - name: Build gateway
+        run: python -m PyInstaller --onefile --clean --name CanTcpGateway --hidden-import can.interfaces.${{ matrix.backend }} can_tcp_gateway.py
+
+      - name: Build client
+        run: python -m PyInstaller --onefile --clean --name CanTcpClient --hidden-import can.interfaces.${{ matrix.backend }} can_tcp_client.py
+
+      - name: Compress binaries with UPX when available
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "Skipping UPX on Windows because PyInstaller binaries use Control Flow Guard."
+            exit 0
+          fi
+
+          if ! command -v upx >/dev/null 2>&1; then
+            echo "UPX is not available; keeping uncompressed binaries."
+            exit 0
+          fi
+
+          for binary in dist/CanTcpGateway* dist/CanTcpClient*; do
+            [ -f "$binary" ] || continue
+            if upx --best --lzma "$binary"; then
+              echo "UPX compressed $binary"
+            else
+              echo "UPX could not compress $binary; keeping the original file."
+            fi
+          done
+
+          exit 0
+
+      - name: Package release files
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item README.md package/
+          Copy-Item dist/CanTcpGateway.exe package/
+          Copy-Item dist/CanTcpClient.exe package/
+          Compress-Archive -Path package/* -DestinationPath "CanTcpGateway-${{ matrix.label }}.zip" -Force
+
+      - name: Package release files on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p package
+          cp README.md package/
+          cp dist/CanTcpGateway* package/
+          cp dist/CanTcpClient* package/
+          tar -czf "CanTcpGateway-${{ matrix.label }}.tar.gz" -C package .
+
+      - name: Upload gateway binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: CanTcpGateway-${{ matrix.label }}
+          path: dist/CanTcpGateway*
+
+      - name: Upload client binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: CanTcpClient-${{ matrix.label }}
+          path: dist/CanTcpClient*
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: CanTcpBundle-${{ matrix.label }}
+          path: CanTcpGateway-${{ matrix.label }}.*

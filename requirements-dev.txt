@@ -1,0 +1,5 @@
+-r requirements.txt
+black>=24,<26
+pytest>=8,<9
+ruff>=0.8,<1
+pyinstaller>=6,<7
