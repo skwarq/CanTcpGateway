@@ -35,6 +35,26 @@ py can_tcp_gateway.py --interface pcan --can PCAN_USBBUS1 --bitrate 250000 --por
 
 The default TCP bind address is `0.0.0.0:29500`. Authentication is intentionally not implemented because this bridge is intended for controlled test networks.
 
+### Automatic gateway discovery
+
+The client can discover a gateway automatically when no TCP host is supplied. The gateway listens for UDP discovery requests on port `29501` and returns the TCP address selected for the interface on which the client is reachable. This selection uses the operating system routing table and is portable across Linux, macOS, and Windows.
+
+```bash
+# Gateway (TCP 29500, UDP discovery 29501)
+python3 can_tcp_gateway.py --interface socketcan --can can0
+
+# Client using UDP discovery
+python3 can_tcp_client.py --can vcan1 --create-vcan
+```
+
+The client retries discovery every three seconds until a gateway responds, and returns to discovery after a TCP connection is lost. Configure the ports and interval with `--discovery-port` and `--discovery-interval`. Supplying a positional host keeps the direct TCP connection mode:
+
+```bash
+python3 can_tcp_client.py 192.168.1.50 --port 29500
+```
+
+Discovery uses a signed-format-independent packet with a random token, so responses from stale or unrelated requests are ignored. UDP broadcast and the discovery port must be allowed by the local firewall.
+
 ## TCP frame format
 
 Every CAN frame is represented by exactly 16 bytes. The layout is compatible with the Linux SocketCAN `struct can_frame` layout, with all multi-byte fields encoded in big-endian byte order:
