@@ -8,6 +8,7 @@ import struct
 import sys
 
 import can
+from discovery import DiscoveryProtocol
 
 
 LOG = logging.getLogger("can-tcp-gateway")
@@ -114,17 +115,21 @@ class Gateway:
                 await self.broadcast(message)
 
 
-async def main(interface: str, channel: str, bitrate: int, host: str, port: int) -> None:
+async def main(interface: str, channel: str, bitrate: int, host: str, port: int, discovery_port: int) -> None:
     loop = asyncio.get_running_loop()
     bus = can.Bus(interface=interface, channel=channel, bitrate=bitrate, receive_own_messages=False)
     gateway = Gateway(bus, loop)
     server = await asyncio.start_server(gateway.client_loop, host, port)
+    discovery_transport, _ = await loop.create_datagram_endpoint(
+        lambda: DiscoveryProtocol(port, LOG), local_addr=("0.0.0.0", discovery_port)
+    )
     addresses = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     LOG.info("Listening on %s; forwarding SocketCAN %s", addresses, interface)
     try:
         async with server:
             await asyncio.gather(server.serve_forever(), gateway.can_reader())
     finally:
+        discovery_transport.close()
         bus.shutdown()
 
 
@@ -152,6 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bitrate", type=int, default=250000, help="CAN bitrate (default: 250000)")
     parser.add_argument("--host", default="0.0.0.0", help="TCP bind address")
     parser.add_argument("--port", type=int, default=29500, help="TCP port (default: 29500)")
+    parser.add_argument("--discovery-port", type=int, default=29501, help="UDP discovery port (default: 29501)")
     parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     if len(sys.argv) == 1:
         parser.print_help()
@@ -163,6 +169,6 @@ if __name__ == "__main__":
     args = parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(message)s")
     try:
-        asyncio.run(main(args.interface, args.can, args.bitrate, args.host, args.port))
+        asyncio.run(main(args.interface, args.can, args.bitrate, args.host, args.port, args.discovery_port))
     except KeyboardInterrupt:
         pass

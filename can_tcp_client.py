@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 
 import can
+from discovery import discover
 
 LOG = logging.getLogger("can-tcp-client")
 FRAME_SIZE = 16
@@ -82,25 +83,37 @@ class Client:
         LOG.info("%s", format_frame(direction, message))
 
     async def local_to_tcp(self) -> None:
-        while True:
-            message = await self.loop.run_in_executor(None, self.bus.recv, 1.0)
-            if message is None or self.writer is None:
-                continue
-            async with self.write_lock:
-                self.writer.write(frame_to_bytes(message))
-                await self.writer.drain()
-            self.log_frame("TX", message)
+        try:
+            while True:
+                message = await self.loop.run_in_executor(None, self.bus.recv, 1.0)
+                if message is None or self.writer is None:
+                    continue
+                async with self.write_lock:
+                    self.writer.write(frame_to_bytes(message))
+                    await self.writer.drain()
+                self.log_frame("TX", message)
+        except (ConnectionError, asyncio.CancelledError):
+            return
 
     async def tcp_to_local(self, reader: asyncio.StreamReader) -> None:
-        while True:
-            packet = await reader.readexactly(FRAME_SIZE)
-            message = bytes_to_frame(packet)
-            self.bus.send(message)
-            self.log_frame("RX", message)
+        try:
+            while True:
+                packet = await reader.readexactly(FRAME_SIZE)
+                message = bytes_to_frame(packet)
+                self.bus.send(message)
+                self.log_frame("RX", message)
+        except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError):
+            return
 
-    async def run(self, host: str, port: int, reconnect_delay: float) -> None:
+    async def run(
+        self, host: str | None, port: int, reconnect_delay: float, discovery_port: int, discovery_interval: float
+    ) -> None:
+        use_discovery = host is None
         while True:
             try:
+                if use_discovery:
+                    found = await discover(discovery_port, min(discovery_interval, 1.0), discovery_interval, LOG)
+                    host, port = found.address, found.port
                 reader, self.writer = await asyncio.open_connection(host, port)
                 LOG.info("Connected to %s:%d", host, port)
                 tasks = {
@@ -112,19 +125,26 @@ class Client:
                     task.cancel()
                 await asyncio.gather(*done, return_exceptions=True)
                 await asyncio.gather(*pending, return_exceptions=True)
+            except asyncio.CancelledError:
+                raise
             except (ConnectionError, asyncio.IncompleteReadError, OSError) as exc:
-                LOG.warning("TCP connection lost: %s; retrying in %.1fs", exc, reconnect_delay)
+                LOG.info("TCP connection closed: %s; retrying in %.1fs", exc, reconnect_delay)
             finally:
                 if self.writer:
                     self.writer.close()
-                    await self.writer.wait_closed()
+                    try:
+                        await self.writer.wait_closed()
+                    except OSError:
+                        pass
                 self.writer = None
+                if use_discovery:
+                    host = None
             await asyncio.sleep(reconnect_delay)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host", help="TCP gateway address")
+    parser.add_argument("host", nargs="?", help="TCP gateway address; omit to use UDP discovery")
     parser.add_argument("--port", type=int, default=29500)
     parser.add_argument("--interface", default="socketcan", help="python-can backend: socketcan, slcan, pcan, ...")
     parser.add_argument("--can", default="vcan1", help="local CAN channel, e.g. vcan1 or COM3")
@@ -134,6 +154,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dump-filter", help="comma-separated CAN IDs to print, e.g. 0x18FEE8F0,0x0CF022F0")
     parser.add_argument("--dump-rate", type=int, default=200, help="maximum dump lines per second (default: 200)")
     parser.add_argument("--reconnect-delay", type=float, default=2.0, help="TCP reconnect delay in seconds")
+    parser.add_argument("--discovery-port", type=int, default=29501, help="UDP discovery port (default: 29501)")
+    parser.add_argument("--discovery-interval", type=float, default=3.0, help="seconds between discovery requests")
     parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser.parse_args()
 
@@ -152,7 +174,7 @@ if __name__ == "__main__":
 
     async def run_client() -> None:
         client = Client(bus, args.dump, dump_ids, args.dump_rate)
-        await client.run(args.host, args.port, args.reconnect_delay)
+        await client.run(args.host, args.port, args.reconnect_delay, args.discovery_port, args.discovery_interval)
 
     try:
         asyncio.run(run_client())
